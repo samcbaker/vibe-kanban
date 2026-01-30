@@ -356,6 +356,25 @@ export const tasksApi = {
     return handleApiResponse<TaskWithAttemptStatus>(response);
   },
 
+  createAndStartRalphLoop: async (data: {
+    task: CreateTask;
+    repos: { repo_id: string; target_branch: string }[];
+    ralph_config: {
+      ralph_path: string;
+      task_spec: string;
+      spec_filename: string;
+    };
+  }): Promise<TaskWithAttemptStatus> => {
+    const response = await makeRequest(
+      `/api/tasks/create-and-start-ralph-loop`,
+      {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }
+    );
+    return handleApiResponse<TaskWithAttemptStatus>(response);
+  },
+
   update: async (taskId: string, data: UpdateTask): Promise<Task> => {
     const response = await makeRequest(`/api/tasks/${taskId}`, {
       method: 'PUT',

@@ -144,6 +144,23 @@ pub struct CreateAndStartTaskRequest {
     pub repos: Vec<WorkspaceRepoInput>,
 }
 
+#[derive(Debug, Deserialize, TS)]
+pub struct RalphLoopConfig {
+    /// Path to the .ralph directory
+    pub ralph_path: String,
+    /// The task specification content
+    pub task_spec: String,
+    /// Filename for the spec (without .md extension)
+    pub spec_filename: String,
+}
+
+#[derive(Debug, Deserialize, TS)]
+pub struct CreateAndStartRalphLoopRequest {
+    pub task: CreateTask,
+    pub repos: Vec<WorkspaceRepoInput>,
+    pub ralph_config: RalphLoopConfig,
+}
+
 pub async fn create_task_and_start(
     State(deployment): State<DeploymentImpl>,
     Json(payload): Json<CreateAndStartTaskRequest>,
@@ -248,6 +265,148 @@ pub async fn create_task_and_start(
         has_in_progress_attempt: is_attempt_running,
         last_attempt_failed: false,
         executor: payload.executor_profile_id.executor.to_string(),
+    })))
+}
+
+pub async fn create_task_and_start_ralph_loop(
+    State(deployment): State<DeploymentImpl>,
+    Json(payload): Json<CreateAndStartRalphLoopRequest>,
+) -> Result<ResponseJson<ApiResponse<TaskWithAttemptStatus>>, ApiError> {
+    if payload.repos.is_empty() {
+        return Err(ApiError::BadRequest(
+            "At least one repository is required".to_string(),
+        ));
+    }
+
+    let pool = &deployment.db().pool;
+
+    // Get the first repo to resolve the ralph_path relative to it
+    let first_repo = Repo::find_by_id(pool, payload.repos[0].repo_id)
+        .await?
+        .ok_or(RepoError::NotFound)?;
+
+    // Resolve ralph_path relative to the repo path if it's relative
+    let ralph_path = if payload.ralph_config.ralph_path.starts_with('/') {
+        PathBuf::from(&payload.ralph_config.ralph_path)
+    } else {
+        PathBuf::from(&first_repo.path).join(&payload.ralph_config.ralph_path)
+    };
+
+    // Validate ralph path exists
+    if !ralph_path.exists() {
+        return Err(ApiError::BadRequest(format!(
+            "Ralph directory not found: {}",
+            ralph_path.display()
+        )));
+    }
+
+    let loop_script = ralph_path.join("loop.sh");
+    if !loop_script.exists() {
+        return Err(ApiError::BadRequest(format!(
+            "Ralph loop.sh not found at: {}",
+            loop_script.display()
+        )));
+    }
+
+    // Convert to absolute path string for use in container service
+    let ralph_path_str = ralph_path.to_string_lossy().to_string();
+
+    let task_id = Uuid::new_v4();
+    let task = Task::create(pool, &payload.task, task_id).await?;
+
+    if let Some(image_ids) = &payload.task.image_ids {
+        TaskImage::associate_many_dedup(pool, task.id, image_ids).await?;
+    }
+
+    deployment
+        .track_if_analytics_allowed(
+            "task_created",
+            serde_json::json!({
+                "task_id": task.id.to_string(),
+                "project_id": task.project_id,
+                "has_description": task.description.is_some(),
+                "has_images": payload.task.image_ids.is_some(),
+                "ralph_loop": true,
+            }),
+        )
+        .await;
+
+    let attempt_id = Uuid::new_v4();
+    let git_branch_name = deployment
+        .container()
+        .git_branch_from_workspace(&attempt_id, &task.title)
+        .await;
+
+    // Compute agent_working_dir based on repo count
+    let agent_working_dir = if payload.repos.len() == 1 {
+        let repo = Repo::find_by_id(pool, payload.repos[0].repo_id)
+            .await?
+            .ok_or(RepoError::NotFound)?;
+        match repo.default_working_dir {
+            Some(subdir) => {
+                let path = PathBuf::from(&repo.name).join(&subdir);
+                Some(path.to_string_lossy().to_string())
+            }
+            None => Some(repo.name),
+        }
+    } else {
+        None
+    };
+
+    let workspace = Workspace::create(
+        pool,
+        &CreateWorkspace {
+            branch: git_branch_name,
+            agent_working_dir,
+        },
+        attempt_id,
+        task.id,
+    )
+    .await?;
+
+    let workspace_repos: Vec<CreateWorkspaceRepo> = payload
+        .repos
+        .iter()
+        .map(|r| CreateWorkspaceRepo {
+            repo_id: r.repo_id,
+            target_branch: r.target_branch.clone(),
+        })
+        .collect();
+    WorkspaceRepo::create_many(&deployment.db().pool, workspace.id, &workspace_repos).await?;
+
+    let is_attempt_running = deployment
+        .container()
+        .start_workspace_ralph_loop(
+            &workspace,
+            ralph_path_str,
+            payload.ralph_config.task_spec.clone(),
+            payload.ralph_config.spec_filename.clone(),
+        )
+        .await
+        .inspect_err(|err| tracing::error!("Failed to start Ralph loop: {}", err))
+        .is_ok();
+
+    deployment
+        .track_if_analytics_allowed(
+            "task_attempt_started",
+            serde_json::json!({
+                "task_id": task.id.to_string(),
+                "executor": "ralph_loop",
+                "workspace_id": workspace.id.to_string(),
+            }),
+        )
+        .await;
+
+    let task = Task::find_by_id(pool, task.id)
+        .await?
+        .ok_or(ApiError::Database(SqlxError::RowNotFound))?;
+
+    tracing::info!("Started Ralph loop for task {}", task.id);
+    Ok(ResponseJson(ApiResponse::success(TaskWithAttemptStatus {
+        task,
+        has_in_progress_attempt: is_attempt_running,
+        last_attempt_failed: false,
+        executor: "ralph_loop".to_string(),
     })))
 }
 
@@ -409,6 +568,10 @@ pub fn router(deployment: &DeploymentImpl) -> Router<DeploymentImpl> {
         .route("/", get(get_tasks).post(create_task))
         .route("/stream/ws", get(stream_tasks_ws))
         .route("/create-and-start", post(create_task_and_start))
+        .route(
+            "/create-and-start-ralph-loop",
+            post(create_task_and_start_ralph_loop),
+        )
         .nest("/{task_id}", task_id_router);
 
     // mount under /projects/:project_id/tasks

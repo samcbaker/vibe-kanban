@@ -67,6 +67,35 @@ export function useTaskMutations(projectId?: string) {
     },
   });
 
+  const createAndStartRalphLoop = useMutation({
+    mutationFn: (data: {
+      task: CreateTask;
+      repos: { repo_id: string; target_branch: string }[];
+      ralph_config: {
+        ralph_path: string;
+        task_spec: string;
+        spec_filename: string;
+      };
+    }) => tasksApi.createAndStartRalphLoop(data),
+    onSuccess: (createdTask: TaskWithAttemptStatus) => {
+      invalidateQueries();
+      // Invalidate parent's relationships cache if this is a subtask
+      if (createdTask.parent_workspace_id) {
+        queryClient.invalidateQueries({
+          queryKey: taskRelationshipsKeys.byAttempt(
+            createdTask.parent_workspace_id
+          ),
+        });
+      }
+      if (projectId) {
+        navigate(`${paths.task(projectId, createdTask.id)}/attempts/latest`);
+      }
+    },
+    onError: (err) => {
+      console.error('Failed to create and start Ralph loop:', err);
+    },
+  });
+
   const updateTask = useMutation({
     mutationFn: ({ taskId, data }: { taskId: string; data: UpdateTask }) =>
       tasksApi.update(taskId, data),
@@ -97,6 +126,7 @@ export function useTaskMutations(projectId?: string) {
   return {
     createTask,
     createAndStart,
+    createAndStartRalphLoop,
     updateTask,
     deleteTask,
   };

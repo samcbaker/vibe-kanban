@@ -8,7 +8,9 @@ use ts_rs::TS;
 use crate::{
     actions::{
         coding_agent_follow_up::CodingAgentFollowUpRequest,
-        coding_agent_initial::CodingAgentInitialRequest, review::ReviewRequest,
+        coding_agent_initial::CodingAgentInitialRequest,
+        ralph_loop::RalphLoopRequest,
+        review::ReviewRequest,
         script::ScriptRequest,
     },
     approvals::ExecutorApprovalService,
@@ -17,9 +19,11 @@ use crate::{
 };
 pub mod coding_agent_follow_up;
 pub mod coding_agent_initial;
+pub mod ralph_loop;
 pub mod review;
 pub mod script;
 
+pub use ralph_loop::RalphLoopMode;
 pub use review::RepoReviewContext;
 
 #[enum_dispatch]
@@ -30,6 +34,7 @@ pub enum ExecutorActionType {
     CodingAgentFollowUpRequest,
     ScriptRequest,
     ReviewRequest,
+    RalphLoopRequest,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -66,7 +71,7 @@ impl ExecutorAction {
                 Some(request.base_executor())
             }
             ExecutorActionType::ReviewRequest(request) => Some(request.base_executor()),
-            ExecutorActionType::ScriptRequest(_) => None,
+            ExecutorActionType::ScriptRequest(_) | ExecutorActionType::RalphLoopRequest(_) => None,
         }
     }
 }

@@ -33,6 +33,7 @@ use executors::{
     actions::{
         ExecutorAction, ExecutorActionType,
         coding_agent_initial::CodingAgentInitialRequest,
+        ralph_loop::{RalphLoopMode, RalphLoopRequest},
         script::{ScriptContext, ScriptRequest, ScriptRequestLanguage},
     },
     executors::{ExecutorError, StandardCodingAgentExecutor},
@@ -1007,6 +1008,71 @@ pub trait ContainerService {
         Ok(execution_process)
     }
 
+    /// Start a workspace with Ralph loop execution.
+    /// This runs the Ralph loop plan first to generate an implementation plan,
+    /// then chains the build loop to execute the plan.
+    async fn start_workspace_ralph_loop(
+        &self,
+        workspace: &Workspace,
+        ralph_path: String,
+        task_spec: String,
+        spec_filename: String,
+    ) -> Result<ExecutionProcess, ContainerError> {
+        // Create container
+        self.create(workspace).await?;
+
+        let workspace = Workspace::find_by_id(&self.db().pool, workspace.id)
+            .await?
+            .ok_or(SqlxError::RowNotFound)?;
+
+        // Create a session for this workspace
+        let session = Session::create(
+            &self.db().pool,
+            &CreateSession {
+                executor: Some("ralph_loop".to_string()),
+            },
+            Uuid::new_v4(),
+            workspace.id,
+        )
+        .await?;
+
+        // Create the Ralph loop action chain:
+        // 1. Plan mode (generates IMPLEMENTATION_PLAN.md)
+        // 2. Build mode (executes the plan in a loop)
+        let build_action = ExecutorAction::new(
+            ExecutorActionType::RalphLoopRequest(RalphLoopRequest {
+                ralph_path: ralph_path.clone(),
+                task_spec: task_spec.clone(),
+                spec_filename: spec_filename.clone(),
+                mode: RalphLoopMode::Build,
+                max_iterations: 0, // No limit for build
+            }),
+            None,
+        );
+
+        let plan_action = ExecutorAction::new(
+            ExecutorActionType::RalphLoopRequest(RalphLoopRequest {
+                ralph_path,
+                task_spec,
+                spec_filename,
+                mode: RalphLoopMode::Plan,
+                max_iterations: 5, // Limit planning iterations
+            }),
+            Some(Box::new(build_action)),
+        );
+
+        let execution_process = self
+            .start_execution(
+                &workspace,
+                &session,
+                &plan_action,
+                &ExecutionProcessRunReason::RalphLoop,
+            )
+            .await?;
+
+        Ok(execution_process)
+    }
+
     async fn start_execution(
         &self,
         workspace: &Workspace,
@@ -1077,7 +1143,7 @@ pub trait ContainerService {
             ExecutorActionType::ReviewRequest(review_request) => {
                 Some(review_request.prompt.clone())
             }
-            ExecutorActionType::ScriptRequest(_) => None,
+            ExecutorActionType::ScriptRequest(_) | ExecutorActionType::RalphLoopRequest(_) => None,
         } {
             let create_coding_agent_turn = CreateCodingAgentTurn {
                 execution_process_id: execution_process.id,
@@ -1224,6 +1290,11 @@ pub trait ContainerService {
                 | ExecutorActionType::CodingAgentInitialRequest(_)
                 | ExecutorActionType::ReviewRequest(_),
             ) => ExecutionProcessRunReason::CodingAgent,
+            // Ralph loop transitions
+            (_, ExecutorActionType::RalphLoopRequest(_)) => ExecutionProcessRunReason::RalphLoop,
+            (ExecutorActionType::RalphLoopRequest(_), ExecutorActionType::ScriptRequest(_)) => {
+                ExecutionProcessRunReason::CleanupScript
+            }
         };
 
         self.start_execution(&ctx.workspace, &ctx.session, next_action, &next_run_reason)

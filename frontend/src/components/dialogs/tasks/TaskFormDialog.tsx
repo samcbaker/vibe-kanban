@@ -81,6 +81,8 @@ type TaskFormValues = {
   executorProfileId: ExecutorProfileId | null;
   repoBranches: RepoBranch[];
   autoStart: boolean;
+  // Ralph loop option - when enabled, description is used as the task spec
+  useRalphLoop: boolean;
 };
 
 const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
@@ -88,7 +90,7 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
   const editMode = mode === 'edit';
   const modal = useModal();
   const { t } = useTranslation(['tasks', 'common']);
-  const { createTask, createAndStart, updateTask } =
+  const { createTask, createAndStart, createAndStartRalphLoop, updateTask } =
     useTaskMutations(projectId);
   const { system, profiles, loading: userSystemLoading } = useUserSystem();
   const { upload, uploadForTask } = useImageUpload();
@@ -136,6 +138,7 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
           executorProfileId: baseProfile,
           repoBranches: defaultRepoBranches,
           autoStart: false,
+          useRalphLoop: false,
         };
 
       case 'duplicate':
@@ -146,6 +149,7 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
           executorProfileId: baseProfile,
           repoBranches: defaultRepoBranches,
           autoStart: true,
+          useRalphLoop: false,
         };
 
       case 'subtask':
@@ -158,6 +162,7 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
           executorProfileId: baseProfile,
           repoBranches: defaultRepoBranches,
           autoStart: true,
+          useRalphLoop: false,
         };
     }
   }, [mode, props, system.config?.executor_profile, defaultRepoBranches]);
@@ -192,7 +197,33 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
         shared_task_id: null,
       };
       const shouldAutoStart = value.autoStart && !forceCreateOnlyRef.current;
-      if (shouldAutoStart) {
+
+      if (shouldAutoStart && value.useRalphLoop) {
+        // Use Ralph loop execution - description field is used as the task spec
+        const repos = value.repoBranches.map((rb) => ({
+          repo_id: rb.repoId,
+          target_branch: rb.branch,
+        }));
+        // Generate a spec filename from the task title
+        const specFilename = value.title
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, '_')
+          .replace(/^_|_$/g, '')
+          .substring(0, 50);
+        await createAndStartRalphLoop.mutateAsync(
+          {
+            task,
+            repos,
+            ralph_config: {
+              // ralph_path will be resolved on the backend relative to the repo
+              ralph_path: '.ralph',
+              task_spec: value.description,
+              spec_filename: specFilename || 'task_spec',
+            },
+          },
+          { onSuccess: () => modal.remove() }
+        );
+      } else if (shouldAutoStart) {
         const repos = value.repoBranches.map((rb) => ({
           repo_id: rb.repoId,
           target_branch: rb.branch,
@@ -214,12 +245,24 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
   const validator = (value: TaskFormValues): string | undefined => {
     if (!value.title.trim().length) return 'need title';
     if (value.autoStart && !forceCreateOnlyRef.current) {
-      if (!value.executorProfileId) return 'need executor profile';
-      if (
-        value.repoBranches.length === 0 ||
-        value.repoBranches.some((rb) => !rb.branch)
-      ) {
-        return 'need branch for all repos';
+      // Ralph loop has different validation - description is used as task spec
+      if (value.useRalphLoop) {
+        if (!value.description.trim().length)
+          return 'need description (used as task spec for Ralph)';
+        if (
+          value.repoBranches.length === 0 ||
+          value.repoBranches.some((rb) => !rb.branch)
+        ) {
+          return 'need branch for all repos';
+        }
+      } else {
+        if (!value.executorProfileId) return 'need executor profile';
+        if (
+          value.repoBranches.length === 0 ||
+          value.repoBranches.some((rb) => !rb.branch)
+        ) {
+          return 'need branch for all repos';
+        }
       }
     }
   };
@@ -600,6 +643,34 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
                         }}
                       </form.Field>
                     )}
+
+                    {/* Ralph Loop Option */}
+                    <form.Field name="useRalphLoop">
+                      {(ralphField) => (
+                        <div className="flex items-center gap-2 pt-2 border-t">
+                          <Switch
+                            id="ralph-loop-switch"
+                            checked={ralphField.state.value}
+                            onCheckedChange={(checked) =>
+                              ralphField.handleChange(checked)
+                            }
+                            disabled={isSubmitting}
+                            className="data-[state=checked]:bg-purple-600 dark:data-[state=checked]:bg-purple-500"
+                          />
+                          <Label
+                            htmlFor="ralph-loop-switch"
+                            className="text-sm cursor-pointer"
+                          >
+                            Use Ralph Loop
+                          </Label>
+                          {ralphField.state.value && (
+                            <span className="text-xs text-muted-foreground ml-2">
+                              (description will be used as task spec)
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </form.Field>
                   </div>
                 );
               }}
@@ -657,15 +728,24 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
                 })}
               >
                 {({ canSubmit, isSubmitting, values }) => {
-                  const buttonText = editMode
-                    ? isSubmitting
+                  let buttonText: string;
+                  if (editMode) {
+                    buttonText = isSubmitting
                       ? t('taskFormDialog.updating')
-                      : t('taskFormDialog.updateTask')
-                    : isSubmitting
-                      ? values.autoStart
-                        ? t('taskFormDialog.starting')
-                        : t('taskFormDialog.creating')
-                      : t('taskFormDialog.create');
+                      : t('taskFormDialog.updateTask');
+                  } else if (isSubmitting) {
+                    buttonText =
+                      values.autoStart && values.useRalphLoop
+                        ? 'Starting Ralph...'
+                        : values.autoStart
+                          ? t('taskFormDialog.starting')
+                          : t('taskFormDialog.creating');
+                  } else {
+                    buttonText =
+                      values.autoStart && values.useRalphLoop
+                        ? 'Start Ralph Loop'
+                        : t('taskFormDialog.create');
+                  }
 
                   return (
                     <Button onClick={form.handleSubmit} disabled={!canSubmit}>
