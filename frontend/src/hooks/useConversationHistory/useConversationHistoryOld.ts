@@ -52,7 +52,8 @@ export const useConversationHistoryOld = ({
       (ep) =>
         ep.run_reason === 'setupscript' ||
         ep.run_reason === 'cleanupscript' ||
-        ep.run_reason === 'codingagent'
+        ep.run_reason === 'codingagent' ||
+        ep.run_reason === 'ralphloop'
     );
   }, [executionProcessesRaw]);
 
@@ -60,7 +61,11 @@ export const useConversationHistoryOld = ({
     executionProcess: ExecutionProcess
   ) => {
     let url = '';
-    if (executionProcess.executor_action.typ.type === 'ScriptRequest') {
+    // ScriptRequest and RalphLoopRequest produce raw terminal output
+    if (
+      executionProcess.executor_action.typ.type === 'ScriptRequest' ||
+      executionProcess.executor_action.typ.type === 'RalphLoopRequest'
+    ) {
       url = `/api/execution-processes/${executionProcess.id}/raw-logs/ws`;
     } else {
       url = `/api/execution-processes/${executionProcess.id}/normalized-logs/ws`;

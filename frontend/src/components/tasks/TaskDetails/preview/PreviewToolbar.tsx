@@ -175,7 +175,7 @@ export function PreviewToolbar({
             onBlur={handleSubmit}
             onKeyDown={handleKeyDown}
             className="h-7 text-sm font-mono flex-1"
-            placeholder="http://localhost:3000"
+            placeholder="http://localhost:3002"
           />
         ) : (
           <>

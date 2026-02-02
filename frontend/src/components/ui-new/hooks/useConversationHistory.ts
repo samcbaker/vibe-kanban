@@ -72,7 +72,8 @@ export const useConversationHistory = ({
       (ep) =>
         ep.run_reason === 'setupscript' ||
         ep.run_reason === 'cleanupscript' ||
-        ep.run_reason === 'codingagent'
+        ep.run_reason === 'codingagent' ||
+        ep.run_reason === 'ralphloop'
     );
   }, [executionProcessesRaw]);
 
@@ -80,7 +81,11 @@ export const useConversationHistory = ({
     executionProcess: ExecutionProcess
   ) => {
     let url = '';
-    if (executionProcess.executor_action.typ.type === 'ScriptRequest') {
+    // ScriptRequest and RalphLoopRequest produce raw terminal output
+    if (
+      executionProcess.executor_action.typ.type === 'ScriptRequest' ||
+      executionProcess.executor_action.typ.type === 'RalphLoopRequest'
+    ) {
       url = `/api/execution-processes/${executionProcess.id}/raw-logs/ws`;
     } else {
       url = `/api/execution-processes/${executionProcess.id}/normalized-logs/ws`;
@@ -363,6 +368,78 @@ export const useConversationHistory = ({
             );
 
             entries.push(toolPatchWithKey);
+          } else if (
+            p.executionProcess.executor_action.typ.type === 'RalphLoopRequest'
+          ) {
+            // Add Ralph loop as a tool call with raw terminal output
+            const ralphMode =
+              p.executionProcess.executor_action.typ.mode === 'Plan'
+                ? 'Plan'
+                : 'Build';
+            const toolName = `Ralph Loop (${ralphMode})`;
+
+            const executionProcess = getLiveExecutionProcess(
+              p.executionProcess.id
+            );
+
+            if (executionProcess?.status === ExecutionProcessStatus.running) {
+              hasRunningProcess = true;
+            }
+
+            if (
+              (executionProcess?.status === ExecutionProcessStatus.failed ||
+                executionProcess?.status === ExecutionProcessStatus.killed) &&
+              index === Object.keys(executionProcessState).length - 1
+            ) {
+              lastProcessFailedOrKilled = true;
+            }
+
+            const exitCode = Number(executionProcess?.exit_code) || 0;
+            const exit_status: CommandExitStatus | null =
+              executionProcess?.status === 'running'
+                ? null
+                : {
+                    type: 'exit_code',
+                    code: exitCode,
+                  };
+
+            const toolStatus: ToolStatus =
+              executionProcess?.status === ExecutionProcessStatus.running
+                ? { status: 'created' }
+                : exitCode === 0
+                  ? { status: 'success' }
+                  : { status: 'failed' };
+
+            const output = p.entries.map((line) => line.content).join('\n');
+
+            const toolNormalizedEntry: NormalizedEntry = {
+              entry_type: {
+                type: 'tool_use',
+                tool_name: toolName,
+                action_type: {
+                  action: 'command_run',
+                  command: `ralph loop ${ralphMode.toLowerCase()}`,
+                  result: {
+                    output,
+                    exit_status,
+                  },
+                },
+                status: toolStatus,
+              },
+              content: toolName,
+              timestamp: null,
+            };
+            const toolPatch: PatchType = {
+              type: 'NORMALIZED_ENTRY',
+              content: toolNormalizedEntry,
+            };
+            const toolPatchWithKey: PatchTypeWithKey = patchWithKey(
+              toolPatch,
+              p.executionProcess.id,
+              0
+            );
+
+            entries.push(toolPatchWithKey);
           }
 
           return entries;
@@ -419,7 +496,11 @@ export const useConversationHistory = ({
     (executionProcess: ExecutionProcess): Promise<void> => {
       return new Promise((resolve, reject) => {
         let url = '';
-        if (executionProcess.executor_action.typ.type === 'ScriptRequest') {
+        // ScriptRequest and RalphLoopRequest produce raw terminal output
+        if (
+          executionProcess.executor_action.typ.type === 'ScriptRequest' ||
+          executionProcess.executor_action.typ.type === 'RalphLoopRequest'
+        ) {
           url = `/api/execution-processes/${executionProcess.id}/raw-logs/ws`;
         } else {
           url = `/api/execution-processes/${executionProcess.id}/normalized-logs/ws`;

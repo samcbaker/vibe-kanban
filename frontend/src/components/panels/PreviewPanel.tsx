@@ -243,7 +243,7 @@ export function PreviewPanel() {
                   <li>{t('preview.troubleAlert.item1')}</li>
                   <li>
                     {t('preview.troubleAlert.item2')}{' '}
-                    <code>http://localhost:3000</code>
+                    <code>http://localhost:3002</code>
                     {t('preview.troubleAlert.item2Suffix')}
                   </li>
                   <li>

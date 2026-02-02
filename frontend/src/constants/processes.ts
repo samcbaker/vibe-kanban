@@ -6,6 +6,7 @@ export const PROCESS_RUN_REASONS = {
   CLEANUP_SCRIPT: 'cleanupscript' as ExecutionProcessRunReason,
   CODING_AGENT: 'codingagent' as ExecutionProcessRunReason,
   DEV_SERVER: 'devserver' as ExecutionProcessRunReason,
+  RALPH_LOOP: 'ralphloop' as ExecutionProcessRunReason,
 } as const;
 
 export const isCodingAgent = (
