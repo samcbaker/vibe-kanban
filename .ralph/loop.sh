@@ -25,6 +25,8 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PYTHON_SCRIPT="$SCRIPT_DIR/loop.py"
 
+python3 -m venv .venv && . .venv/bin/activate
+
 # Check if Python 3 is available
 if ! command -v python3 &> /dev/null; then
     echo "Error: Python 3 is required but not installed."
@@ -32,21 +34,9 @@ if ! command -v python3 &> /dev/null; then
     exit 1
 fi
 
-exec python3 -m venv .venv && . .venv/bin/activate
-
 # Check if rich library is installed
 if ! python3 -c "import rich" &> /dev/null; then
-    echo "Error: 'rich' library is required but not installed."
-    echo "Install it with: pip install rich"
-    echo ""
-    read -p "Would you like to install it now? [y/N] " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        pip3 install rich
-        echo "rich installed successfully."
-    else
-        exit 1
-    fi
+    pip3 install rich
 fi
 
 # Check if the Python script exists
