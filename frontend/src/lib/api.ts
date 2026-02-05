@@ -9,6 +9,7 @@ import {
   CreatePrApiRequest,
   CreateTask,
   CreateAndStartTaskRequest,
+  CreateAndStartRalphRequest,
   CreateTaskAttemptBody,
   CreateTag,
   DirectoryListResponse,
@@ -92,6 +93,7 @@ import {
   CreateWorkspaceFromPrBody,
   CreateWorkspaceFromPrResponse,
   CreateFromPrError,
+  RalphResponse,
 } from 'shared/types';
 import type { WorkspaceWithSession } from '@/types/attempt';
 import { createWorkspaceWithSession } from '@/types/attempt';
@@ -350,6 +352,20 @@ export const tasksApi = {
     data: CreateAndStartTaskRequest
   ): Promise<TaskWithAttemptStatus> => {
     const response = await makeRequest(`/api/tasks/create-and-start`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+    return handleApiResponse<TaskWithAttemptStatus>(response);
+  },
+
+  /**
+   * Create a task with Ralph enabled and start Ralph plan mode.
+   * This creates the workspace (worktree) but doesn't start the coding agent.
+   */
+  createAndStartRalph: async (
+    data: CreateAndStartRalphRequest
+  ): Promise<TaskWithAttemptStatus> => {
+    const response = await makeRequest(`/api/tasks/create-and-start-ralph`, {
       method: 'POST',
       body: JSON.stringify(data),
     });
@@ -1355,5 +1371,48 @@ export const queueApi = {
   getStatus: async (sessionId: string): Promise<QueueStatus> => {
     const response = await makeRequest(`/api/sessions/${sessionId}/queue`);
     return handleApiResponse<QueueStatus>(response);
+  },
+};
+
+// Ralph Mode API - AI-driven task execution control
+export const ralphApi = {
+  /**
+   * Start Ralph in plan mode (10 iterations)
+   */
+  startPlan: async (taskId: string): Promise<RalphResponse> => {
+    const response = await makeRequest(`/api/tasks/${taskId}/ralph/start-plan`, {
+      method: 'POST',
+    });
+    return handleApiResponse<RalphResponse>(response);
+  },
+
+  /**
+   * Start Ralph in build mode (20 iterations)
+   */
+  startBuild: async (taskId: string): Promise<RalphResponse> => {
+    const response = await makeRequest(`/api/tasks/${taskId}/ralph/start-build`, {
+      method: 'POST',
+    });
+    return handleApiResponse<RalphResponse>(response);
+  },
+
+  /**
+   * Stop Ralph by creating a STOP file in the worktree
+   */
+  stop: async (taskId: string): Promise<RalphResponse> => {
+    const response = await makeRequest(`/api/tasks/${taskId}/ralph/stop`, {
+      method: 'POST',
+    });
+    return handleApiResponse<RalphResponse>(response);
+  },
+
+  /**
+   * Focus/open Terminal.app
+   */
+  openTerminal: async (taskId: string): Promise<RalphResponse> => {
+    const response = await makeRequest(`/api/tasks/${taskId}/ralph/open-terminal`, {
+      method: 'POST',
+    });
+    return handleApiResponse<RalphResponse>(response);
   },
 };

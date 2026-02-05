@@ -19,6 +19,7 @@ pub mod images;
 pub mod oauth;
 pub mod organizations;
 pub mod projects;
+pub mod ralph;
 pub mod repo;
 pub mod scratch;
 pub mod sessions;

@@ -32,7 +32,7 @@ if ! command -v python3 &> /dev/null; then
     exit 1
 fi
 
-exec python3 -m venv .venv && . .venv/bin/activate
+python3 -m venv .venv && . .venv/bin/activate
 
 # Check if rich library is installed
 if ! python3 -c "import rich" &> /dev/null; then

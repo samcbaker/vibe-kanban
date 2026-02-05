@@ -115,6 +115,7 @@ fn generate_types_content() -> String {
         server::routes::task_attempts::OpenEditorRequest::decl(),
         server::routes::task_attempts::OpenEditorResponse::decl(),
         server::routes::tasks::CreateAndStartTaskRequest::decl(),
+        server::routes::tasks::CreateAndStartRalphRequest::decl(),
         server::routes::task_attempts::pr::CreatePrApiRequest::decl(),
         server::routes::images::ImageResponse::decl(),
         server::routes::images::ImageMetadata::decl(),
@@ -216,6 +217,7 @@ fn generate_types_content() -> String {
         executors::logs::ToolStatus::decl(),
         executors::logs::utils::patch::PatchType::decl(),
         serde_json::Value::decl(),
+        server::routes::ralph::RalphResponse::decl(),
     ];
 
     let body = decls

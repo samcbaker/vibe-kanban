@@ -70,6 +70,7 @@ export function NoServerContent({
         status: null,
         parent_workspace_id: null,
         image_ids: null,
+        ralph_enabled: null,
       },
       executor_profile_id: config.executor_profile,
       repos,
