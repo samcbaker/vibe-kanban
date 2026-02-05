@@ -22,6 +22,13 @@ import { openTaskForm } from '@/lib/openTaskForm';
 
 import { useNavigate } from 'react-router-dom';
 import { WorkspaceWithSession } from '@/types/attempt';
+import {
+  canStartRalph,
+  canCancelRalph,
+  canResetRalph,
+} from '@/utils/ralphStatus';
+import { ralphApi } from '@/lib/api';
+import { useQueryClient } from '@tanstack/react-query';
 
 interface ActionsDropdownProps {
   task?: TaskWithAttemptStatus | null;
@@ -128,6 +135,47 @@ export function ActionsDropdown({ task, attempt }: ActionsDropdownProps) {
     });
   };
 
+  const queryClient = useQueryClient();
+
+  const handleStartRalph = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!task?.id) return;
+    try {
+      await ralphApi.startPlan(task.id);
+      queryClient.invalidateQueries({ queryKey: ['tasks'] });
+    } catch (error) {
+      console.error('Failed to start Ralph:', error);
+    }
+  };
+
+  const handleCancelRalph = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!task?.id) return;
+    try {
+      await ralphApi.cancel(task.id);
+      queryClient.invalidateQueries({ queryKey: ['tasks'] });
+    } catch (error) {
+      console.error('Failed to cancel Ralph:', error);
+    }
+  };
+
+  const handleResetRalph = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!task?.id) return;
+    try {
+      await ralphApi.reset(task.id);
+      queryClient.invalidateQueries({ queryKey: ['tasks'] });
+    } catch (error) {
+      console.error('Failed to reset Ralph:', error);
+    }
+  };
+
+  // Determine which Ralph actions are available
+  const showStartRalph = task && canStartRalph(task.ralph_status);
+  const showCancelRalph = task && canCancelRalph(task.ralph_status);
+  const showResetRalph = task && canResetRalph(task.ralph_status);
+  const hasRalphActions = showStartRalph || showCancelRalph || showResetRalph;
+
   return (
     <>
       <DropdownMenu>
@@ -205,6 +253,31 @@ export function ActionsDropdown({ task, attempt }: ActionsDropdownProps) {
               >
                 {t('common:buttons.delete')}
               </DropdownMenuItem>
+            </>
+          )}
+
+          {hasRalphActions && (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel>{t('actionsMenu.ralph', 'Ralph')}</DropdownMenuLabel>
+              {showStartRalph && (
+                <DropdownMenuItem onClick={handleStartRalph}>
+                  {t('actionsMenu.startRalph', 'Start Ralph')}
+                </DropdownMenuItem>
+              )}
+              {showCancelRalph && (
+                <DropdownMenuItem
+                  onClick={handleCancelRalph}
+                  className="text-destructive"
+                >
+                  {t('actionsMenu.cancelRalph', 'Cancel Ralph')}
+                </DropdownMenuItem>
+              )}
+              {showResetRalph && (
+                <DropdownMenuItem onClick={handleResetRalph}>
+                  {t('actionsMenu.resetRalph', 'Reset Ralph')}
+                </DropdownMenuItem>
+              )}
             </>
           )}
         </DropdownMenuContent>

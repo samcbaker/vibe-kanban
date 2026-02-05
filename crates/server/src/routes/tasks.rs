@@ -15,7 +15,7 @@ use axum::{
 use db::models::{
     image::TaskImage,
     repo::{Repo, RepoError},
-    task::{CreateTask, Task, TaskWithAttemptStatus, UpdateTask},
+    task::{CreateTask, RalphStatus, Task, TaskWithAttemptStatus, UpdateTask},
     workspace::{CreateWorkspace, Workspace},
     workspace_repo::{CreateWorkspaceRepo, WorkspaceRepo},
 };
@@ -293,6 +293,22 @@ pub async fn delete_task(
     State(deployment): State<DeploymentImpl>,
 ) -> Result<(StatusCode, ResponseJson<ApiResponse<()>>), ApiError> {
     let pool = &deployment.db().pool;
+
+    // Prevent deletion of tasks with active Ralph execution
+    if matches!(
+        task.ralph_status,
+        RalphStatus::Planning | RalphStatus::AwaitingApproval | RalphStatus::Building
+    ) {
+        return Err(ApiError::BadRequest(format!(
+            "Cannot delete task while Ralph is {}. Cancel Ralph first.",
+            match task.ralph_status {
+                RalphStatus::Planning => "planning",
+                RalphStatus::AwaitingApproval => "awaiting approval",
+                RalphStatus::Building => "building",
+                _ => "active",
+            }
+        )));
+    }
 
     // Gather task attempts data needed for background cleanup
     let attempts = Workspace::fetch_all(pool, Some(task.id))

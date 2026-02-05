@@ -9,6 +9,9 @@ import { paths } from '@/lib/paths';
 import { attemptsApi } from '@/lib/api';
 import { TaskCardHeader } from './TaskCardHeader';
 import { useTranslation } from 'react-i18next';
+import { ralphStatusConfig } from '@/utils/ralphStatus';
+import { cn } from '@/lib/utils';
+import { RalphPlanDialog } from '@/components/dialogs/tasks/RalphPlanDialog';
 
 type Task = TaskWithAttemptStatus;
 
@@ -60,6 +63,19 @@ export function TaskCard({
     [task.parent_workspace_id, projectId, navigate, isNavigatingToParent]
   );
 
+  const handleRalphStatusClick = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      const config = ralphStatusConfig[task.ralph_status];
+      if (!config.clickable || !config.action) return;
+
+      // All actions open the RalphPlanDialog which handles different modes
+      // based on the task's ralph_status (approval, readonly, or error)
+      RalphPlanDialog.show({ task });
+    },
+    [task]
+  );
+
   const localRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -90,6 +106,33 @@ export function TaskCard({
           title={task.title}
           right={
             <>
+              {/* Ralph status indicator */}
+              {task.ralph_status !== 'none' && (() => {
+                const config = ralphStatusConfig[task.ralph_status];
+                const Icon = config.icon;
+                if (!Icon) return null;
+
+                if (config.clickable) {
+                  return (
+                    <Button
+                      variant="icon"
+                      onClick={handleRalphStatusClick}
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onMouseDown={(e) => e.stopPropagation()}
+                      title={config.label}
+                      className={cn('p-0', config.color)}
+                    >
+                      <Icon className={cn('h-4 w-4', config.animate)} />
+                    </Button>
+                  );
+                }
+
+                return (
+                  <span title={config.label} className={config.color}>
+                    <Icon className={cn('h-4 w-4', config.animate)} />
+                  </span>
+                );
+              })()}
               {task.has_in_progress_attempt && (
                 <Loader2 className="h-4 w-4 animate-spin text-blue-500" />
               )}

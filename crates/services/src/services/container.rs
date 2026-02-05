@@ -20,7 +20,7 @@ use db::{
         },
         repo::Repo,
         session::{CreateSession, Session, SessionError},
-        task::{Task, TaskStatus},
+        task::{RalphStatus, Task, TaskStatus},
         workspace::{Workspace, WorkspaceError},
         workspace_repo::WorkspaceRepo,
     },
@@ -195,6 +195,15 @@ pub trait ContainerService {
             return false;
         }
 
+        // Never finalize Ralph processes - they manage their own status
+        // (Safety net: Ralph should exit the exit monitor early and never reach here)
+        if matches!(
+            ctx.execution_process.run_reason,
+            ExecutionProcessRunReason::RalphPlan | ExecutionProcessRunReason::RalphBuild
+        ) {
+            return false;
+        }
+
         // Never finalize setup scripts without a next_action (parallel mode).
         // In sequential mode, setup scripts have next_action pointing to coding agent,
         // so they won't finalize anyway (handled by next_action.is_none() check below).
@@ -305,6 +314,36 @@ pub trait ContainerService {
             }
             // Process marked as failed
             tracing::info!("Marked orphaned execution process {} as failed", process.id);
+
+            // Handle orphaned Ralph processes - update ralph_status instead of task status
+            if matches!(
+                process.run_reason,
+                ExecutionProcessRunReason::RalphPlan | ExecutionProcessRunReason::RalphBuild
+            ) {
+                if let Ok(Some(session)) =
+                    Session::find_by_id(&self.db().pool, process.session_id).await
+                    && let Ok(Some(workspace)) =
+                        Workspace::find_by_id(&self.db().pool, session.workspace_id).await
+                    && let Ok(Some(task)) = workspace.parent_task(&self.db().pool).await
+                {
+                    tracing::info!(
+                        "Updating ralph_status to Failed for orphaned Ralph process {} on task {}",
+                        process.id,
+                        task.id
+                    );
+                    if let Err(e) =
+                        Task::update_ralph_status(&self.db().pool, task.id, RalphStatus::Failed)
+                            .await
+                    {
+                        tracing::error!(
+                            "Failed to update ralph_status to Failed for orphaned Ralph process: {}",
+                            e
+                        );
+                    }
+                }
+                continue; // Skip normal task status update for Ralph processes
+            }
+
             // Update task status to InReview for coding agent and setup script failures
             if matches!(
                 process.run_reason,

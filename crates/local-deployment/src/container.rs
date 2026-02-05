@@ -20,7 +20,7 @@ use db::{
         repo::Repo,
         scratch::{DraftFollowUpData, Scratch, ScratchType},
         session::{Session, SessionError},
-        task::{Task, TaskStatus},
+        task::{RalphStatus, Task, TaskStatus},
         workspace::Workspace,
         workspace_repo::WorkspaceRepo,
     },
@@ -474,6 +474,61 @@ impl LocalContainerService {
                 if let Err(e) = container.update_executor_session_summary(&exec_id).await {
                     tracing::warn!("Failed to update executor session summary: {}", e);
                 }
+
+                // ========== RALPH EARLY EXIT ==========
+                // Ralph processes must NOT proceed to try_start_next_action() or should_finalize().
+                // They only update ralph_status on the task and return early.
+                if matches!(
+                    ctx.execution_process.run_reason,
+                    ExecutionProcessRunReason::RalphPlan | ExecutionProcessRunReason::RalphBuild
+                ) {
+                    let is_plan = matches!(
+                        ctx.execution_process.run_reason,
+                        ExecutionProcessRunReason::RalphPlan
+                    );
+                    let success = exit_code == Some(0);
+
+                    let new_ralph_status = if is_plan {
+                        if success {
+                            RalphStatus::AwaitingApproval
+                        } else {
+                            RalphStatus::Failed
+                        }
+                    } else {
+                        // Build mode
+                        if success {
+                            RalphStatus::Completed
+                        } else {
+                            RalphStatus::Failed
+                        }
+                    };
+
+                    tracing::info!(
+                        "Ralph {} {} (exit_code={:?}), updating task {} ralph_status to {:?}",
+                        if is_plan { "plan" } else { "build" },
+                        if success { "succeeded" } else { "failed" },
+                        exit_code,
+                        ctx.task.id,
+                        new_ralph_status
+                    );
+
+                    if let Err(e) = Task::update_ralph_status(&db.pool, ctx.task.id, new_ralph_status).await {
+                        tracing::error!("Failed to update ralph_status for task {}: {}", ctx.task.id, e);
+                    }
+
+                    // Early exit: don't proceed to try_start_next_action or should_finalize
+                    // Wait for DB persistence before cleaning up
+                    let db_stream_handle = container.take_db_stream_handle(&exec_id).await;
+                    if let Some(msg_arc) = msg_stores.write().await.remove(&exec_id) {
+                        msg_arc.push_finished();
+                    }
+                    if let Some(handle) = db_stream_handle {
+                        let _ = tokio::time::timeout(Duration::from_secs(5), handle).await;
+                    }
+                    child_store.write().await.remove(&exec_id);
+                    return;
+                }
+                // ========== END RALPH EARLY EXIT ==========
 
                 let success = matches!(
                     ctx.execution_process.status,

@@ -92,6 +92,10 @@ import {
   CreateWorkspaceFromPrBody,
   CreateWorkspaceFromPrResponse,
   CreateFromPrError,
+  RalphStartResponse,
+  RalphPlanResponse,
+  RalphStatusResponse,
+  RalphExecutionDetailsResponse,
 } from 'shared/types';
 import type { WorkspaceWithSession } from '@/types/attempt';
 import { createWorkspaceWithSession } from '@/types/attempt';
@@ -1355,5 +1359,106 @@ export const queueApi = {
   getStatus: async (sessionId: string): Promise<QueueStatus> => {
     const response = await makeRequest(`/api/sessions/${sessionId}/queue`);
     return handleApiResponse<QueueStatus>(response);
+  },
+};
+
+// Ralph API for AI loop execution
+export const ralphApi = {
+  /**
+   * Get Ralph status for a task (for debugging)
+   */
+  getStatus: async (taskId: string): Promise<RalphStatusResponse> => {
+    const response = await makeRequest(`/api/tasks/${taskId}/ralph/status`);
+    return handleApiResponse<RalphStatusResponse>(response);
+  },
+
+  /**
+   * Get execution details including logs (for debugging failures)
+   */
+  getDetails: async (taskId: string): Promise<RalphExecutionDetailsResponse> => {
+    const response = await makeRequest(`/api/tasks/${taskId}/ralph/details`);
+    return handleApiResponse<RalphExecutionDetailsResponse>(response);
+  },
+
+  /**
+   * Start Ralph plan mode for a task
+   * Valid from: None, Failed
+   * Transitions to: Planning
+   */
+  startPlan: async (taskId: string): Promise<RalphStartResponse> => {
+    const response = await makeRequest(`/api/tasks/${taskId}/ralph/start-plan`, {
+      method: 'POST',
+    });
+    return handleApiResponse<RalphStartResponse>(response);
+  },
+
+  /**
+   * Get the implementation plan content
+   * Only available when ralph_status is AwaitingApproval or Completed
+   */
+  getPlan: async (taskId: string): Promise<string> => {
+    const response = await makeRequest(`/api/tasks/${taskId}/ralph/plan`);
+    const data = await handleApiResponse<RalphPlanResponse>(response);
+    return data.content;
+  },
+
+  /**
+   * Approve the plan and start build
+   * Valid from: AwaitingApproval
+   * Transitions to: Building
+   */
+  approvePlan: async (taskId: string): Promise<RalphStartResponse> => {
+    const response = await makeRequest(`/api/tasks/${taskId}/ralph/approve`, {
+      method: 'POST',
+    });
+    return handleApiResponse<RalphStartResponse>(response);
+  },
+
+  /**
+   * Re-run plan mode
+   * Valid from: AwaitingApproval
+   * Transitions to: Planning
+   */
+  rerunPlan: async (taskId: string): Promise<RalphStartResponse> => {
+    const response = await makeRequest(`/api/tasks/${taskId}/ralph/replan`, {
+      method: 'POST',
+    });
+    return handleApiResponse<RalphStartResponse>(response);
+  },
+
+  /**
+   * Restart Ralph from Failed state
+   * Valid from: Failed
+   * Transitions to: Planning
+   */
+  restart: async (taskId: string): Promise<RalphStartResponse> => {
+    const response = await makeRequest(`/api/tasks/${taskId}/ralph/restart`, {
+      method: 'POST',
+    });
+    return handleApiResponse<RalphStartResponse>(response);
+  },
+
+  /**
+   * Cancel Ralph execution
+   * Valid from: Planning, AwaitingApproval, Building, Failed
+   * Transitions to: None
+   */
+  cancel: async (taskId: string): Promise<void> => {
+    const response = await makeRequest(`/api/tasks/${taskId}/ralph/cancel`, {
+      method: 'POST',
+    });
+    await handleApiResponse<void>(response);
+  },
+
+  /**
+   * Reset Ralph from Completed state to allow re-running
+   * Valid from: Completed
+   * Transitions to: None
+   */
+  reset: async (taskId: string): Promise<void> => {
+    const response = await makeRequest(`/api/tasks/${taskId}/ralph/reset`, {
+      method: 'POST',
+    });
+    await handleApiResponse<void>(response);
   },
 };

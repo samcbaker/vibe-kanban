@@ -23,6 +23,7 @@ use crate::{
     executors::{
         amp::Amp, claude::ClaudeCode, codex::Codex, copilot::Copilot, cursor::CursorAgent,
         droid::Droid, gemini::Gemini, opencode::Opencode, qwen::QwenCode,
+        ralph::RalphExecutor,
     },
     logs::utils::patch,
     mcp_config::McpConfig,
@@ -40,6 +41,7 @@ pub mod opencode;
 #[cfg(feature = "qa-mode")]
 pub mod qa_mock;
 pub mod qwen;
+pub mod ralph;
 pub mod utils;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
@@ -117,6 +119,8 @@ pub enum CodingAgent {
     QwenCode,
     Copilot,
     Droid,
+    /// Ralph: AI loop executor for task implementation
+    Ralph(RalphExecutor),
     #[cfg(feature = "qa-mode")]
     QaMock(QaMockExecutor),
 }
@@ -192,6 +196,8 @@ impl CodingAgent {
             }
             Self::CursorAgent(_) => vec![BaseAgentCapability::SetupHelper],
             Self::Copilot(_) => vec![],
+            // Ralph doesn't support session fork or have special capabilities
+            Self::Ralph(_) => vec![],
             #[cfg(feature = "qa-mode")]
             Self::QaMock(_) => vec![], // QA mock doesn't need special capabilities
         }

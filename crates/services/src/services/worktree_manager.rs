@@ -10,8 +10,41 @@ static WORKSPACE_DIR_OVERRIDE: OnceLock<PathBuf> = OnceLock::new();
 use git::{GitService, GitServiceError};
 use git2::{Error as GitError, Repository};
 use thiserror::Error;
-use tracing::{debug, info, trace};
+use tracing::{debug, info, trace, warn};
 use utils::{path::normalize_macos_private_alias, shell::resolve_executable_path};
+
+/// VK-specific plan prompt for Ralph mode
+const VK_PLAN_PROMPT: &str = r#"Read the specification from `.ralph-vibe-kanban/spec` and create an implementation plan.
+
+**Project Structure (vibe-kanban - Rust/React):**
+- `crates/` - Rust workspace (server, db, executors, services, utils, deployment)
+- `frontend/` - React + TypeScript app (Vite, Tailwind)
+- `shared/` - Generated TypeScript types
+
+1. Study `.ralph-vibe-kanban/spec` to understand what needs to be implemented.
+2. Study `CLAUDE.md` for development commands and architecture overview.
+3. Search the existing codebase to understand current patterns.
+4. Create/update `IMPLEMENTATION_PLAN.md` with a prioritized list of tasks.
+
+IMPORTANT: Plan only. Do NOT implement anything. Confirm functionality doesn't exist before planning to add it.
+"#;
+
+/// VK-specific build prompt for Ralph mode
+const VK_BUILD_PROMPT: &str = r#"Implement functionality per the specification in `.ralph-vibe-kanban/spec`.
+
+**Project Structure (vibe-kanban - Rust/React):**
+- `crates/` - Rust workspace (server, db, executors, services, utils, deployment)
+- `frontend/` - React + TypeScript app (Vite, Tailwind)
+- `shared/` - Generated TypeScript types
+
+1. Study `.ralph-vibe-kanban/spec` and `IMPLEMENTATION_PLAN.md`.
+2. Consult `CLAUDE.md` for development commands.
+3. Implement the next priority item from `IMPLEMENTATION_PLAN.md`.
+4. After changes: `cargo check --workspace`, `pnpm run check`
+5. Update `IMPLEMENTATION_PLAN.md` as items are completed.
+
+When all tasks complete, create `.ralph-vibe-kanban/STOP` to exit the loop.
+"#;
 
 // Global synchronization for worktree creation to prevent race conditions
 static WORKTREE_CREATION_LOCKS: LazyLock<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> =
@@ -560,6 +593,220 @@ impl WorktreeManager {
         Self::cleanup_worktree(&cleanup).await?;
         Ok(true)
     }
+
+    /// Setup Ralph in a worktree by copying the `.ralph` directory to `.ralph-vibe-kanban`.
+    ///
+    /// This function:
+    /// 1. Removes any existing `.ralph-vibe-kanban` directory (for re-runs)
+    /// 2. Copies `.ralph` directory contents, skipping `.venv`
+    /// 3. Sets executable permissions on `loop.sh`
+    /// 4. Overwrites prompt files with VK-specific content
+    ///
+    /// # Arguments
+    /// * `worktree_path` - Path to the worktree root
+    /// * `ralph_source_path` - Path to the source `.ralph` directory (usually in main repo)
+    pub async fn setup_ralph_in_worktree(
+        worktree_path: &Path,
+        ralph_source_path: &Path,
+    ) -> Result<(), WorktreeError> {
+        let worktree_path = worktree_path.to_path_buf();
+        let ralph_source_path = ralph_source_path.to_path_buf();
+
+        tokio::task::spawn_blocking(move || {
+            Self::setup_ralph_in_worktree_blocking(&worktree_path, &ralph_source_path)
+        })
+        .await
+        .map_err(|e| WorktreeError::TaskJoin(format!("Task join error: {e}")))?
+    }
+
+    /// Blocking implementation of Ralph setup
+    fn setup_ralph_in_worktree_blocking(
+        worktree_path: &Path,
+        ralph_source_path: &Path,
+    ) -> Result<(), WorktreeError> {
+        let target_dir = worktree_path.join(".ralph-vibe-kanban");
+
+        info!(
+            "Setting up Ralph in worktree: {} -> {}",
+            ralph_source_path.display(),
+            target_dir.display()
+        );
+
+        // Validate source exists
+        if !ralph_source_path.exists() {
+            return Err(WorktreeError::InvalidPath(format!(
+                "Ralph source directory does not exist: {}",
+                ralph_source_path.display()
+            )));
+        }
+
+        // Remove existing target directory (for re-runs)
+        if target_dir.exists() {
+            info!(
+                "Removing existing Ralph directory: {}",
+                target_dir.display()
+            );
+            fs::remove_dir_all(&target_dir).map_err(WorktreeError::Io)?;
+        }
+
+        // Create target directory
+        fs::create_dir_all(&target_dir).map_err(WorktreeError::Io)?;
+
+        // Copy directory contents, skipping .venv
+        Self::copy_dir_recursive(ralph_source_path, &target_dir, &[".venv"])?;
+
+        // Set executable permissions on loop.sh
+        let loop_script = target_dir.join("loop.sh");
+        if loop_script.exists() {
+            Self::set_executable(&loop_script)?;
+            info!("Set executable permission on: {}", loop_script.display());
+        } else {
+            warn!("loop.sh not found in Ralph directory: {}", loop_script.display());
+        }
+
+        // Write VK-specific prompts (overwriting Flutter originals)
+        let plan_prompt_path = target_dir.join("PROMPT_plan.md");
+        let build_prompt_path = target_dir.join("PROMPT_build.md");
+
+        fs::write(&plan_prompt_path, VK_PLAN_PROMPT).map_err(WorktreeError::Io)?;
+        info!("Wrote VK plan prompt to: {}", plan_prompt_path.display());
+
+        fs::write(&build_prompt_path, VK_BUILD_PROMPT).map_err(WorktreeError::Io)?;
+        info!("Wrote VK build prompt to: {}", build_prompt_path.display());
+
+        info!(
+            "Ralph setup complete in worktree: {}",
+            target_dir.display()
+        );
+        Ok(())
+    }
+
+    /// Recursively copy a directory, skipping specified directories
+    fn copy_dir_recursive(
+        src: &Path,
+        dst: &Path,
+        skip_dirs: &[&str],
+    ) -> Result<(), WorktreeError> {
+        for entry in fs::read_dir(src).map_err(WorktreeError::Io)? {
+            let entry = entry.map_err(WorktreeError::Io)?;
+            let path = entry.path();
+            let file_name = entry.file_name();
+            let file_name_str = file_name.to_string_lossy();
+
+            // Skip specified directories
+            if skip_dirs.iter().any(|s| *s == file_name_str) {
+                debug!("Skipping directory: {}", path.display());
+                continue;
+            }
+
+            let dst_path = dst.join(&file_name);
+
+            if path.is_dir() {
+                fs::create_dir_all(&dst_path).map_err(WorktreeError::Io)?;
+                Self::copy_dir_recursive(&path, &dst_path, skip_dirs)?;
+            } else {
+                fs::copy(&path, &dst_path).map_err(WorktreeError::Io)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Set executable permissions on a file (Unix only)
+    #[cfg(unix)]
+    fn set_executable(path: &Path) -> Result<(), WorktreeError> {
+        use std::os::unix::fs::PermissionsExt;
+        let metadata = fs::metadata(path).map_err(WorktreeError::Io)?;
+        let mut permissions = metadata.permissions();
+        // Add execute permission for owner, group, and others (same as chmod +x)
+        let mode = permissions.mode() | 0o111;
+        permissions.set_mode(mode);
+        fs::set_permissions(path, permissions).map_err(WorktreeError::Io)?;
+        Ok(())
+    }
+
+    /// Set executable permissions on a file (no-op on non-Unix)
+    #[cfg(not(unix))]
+    fn set_executable(_path: &Path) -> Result<(), WorktreeError> {
+        // No-op on non-Unix platforms
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn test_setup_ralph_in_worktree() {
+    use tempfile::TempDir;
+    let td = TempDir::new().unwrap();
+
+    // Create a mock source ralph directory
+    let ralph_source = td.path().join(".ralph");
+    std::fs::create_dir_all(&ralph_source).unwrap();
+    std::fs::write(ralph_source.join("loop.sh"), "#!/bin/bash\necho hello").unwrap();
+    std::fs::write(ralph_source.join("loop.py"), "print('hello')").unwrap();
+    std::fs::write(ralph_source.join("PROMPT_plan.md"), "Flutter plan prompt").unwrap();
+    std::fs::write(ralph_source.join("PROMPT_build.md"), "Flutter build prompt").unwrap();
+    std::fs::create_dir_all(ralph_source.join(".venv/bin")).unwrap();
+    std::fs::write(ralph_source.join(".venv/bin/activate"), "venv activate").unwrap();
+    std::fs::create_dir_all(ralph_source.join("specs")).unwrap();
+    std::fs::write(ralph_source.join("specs/test.md"), "test spec").unwrap();
+
+    // Create a mock worktree directory
+    let worktree = td.path().join("worktree");
+    std::fs::create_dir_all(&worktree).unwrap();
+
+    // Run setup
+    WorktreeManager::setup_ralph_in_worktree(&worktree, &ralph_source)
+        .await
+        .unwrap();
+
+    // Verify target directory exists
+    let target = worktree.join(".ralph-vibe-kanban");
+    assert!(target.exists(), "Target directory should exist");
+
+    // Verify loop.sh was copied and is executable
+    let loop_script = target.join("loop.sh");
+    assert!(loop_script.exists(), "loop.sh should exist");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let perms = std::fs::metadata(&loop_script).unwrap().permissions();
+        assert!(perms.mode() & 0o111 != 0, "loop.sh should be executable");
+    }
+
+    // Verify loop.py was copied
+    assert!(target.join("loop.py").exists(), "loop.py should exist");
+
+    // Verify .venv was NOT copied
+    assert!(!target.join(".venv").exists(), ".venv should NOT be copied");
+
+    // Verify specs directory was copied
+    assert!(target.join("specs/test.md").exists(), "specs should be copied");
+
+    // Verify prompts were overwritten with VK content
+    let plan_prompt = std::fs::read_to_string(target.join("PROMPT_plan.md")).unwrap();
+    assert!(
+        plan_prompt.contains("vibe-kanban"),
+        "Plan prompt should contain VK-specific content"
+    );
+    assert!(
+        !plan_prompt.contains("Flutter"),
+        "Plan prompt should not contain Flutter content"
+    );
+
+    let build_prompt = std::fs::read_to_string(target.join("PROMPT_build.md")).unwrap();
+    assert!(
+        build_prompt.contains("vibe-kanban"),
+        "Build prompt should contain VK-specific content"
+    );
+    assert!(
+        !build_prompt.contains("Flutter"),
+        "Build prompt should not contain Flutter content"
+    );
+
+    // Test re-run: setup should work again (removes existing and recreates)
+    WorktreeManager::setup_ralph_in_worktree(&worktree, &ralph_source)
+        .await
+        .unwrap();
+    assert!(target.exists(), "Target should exist after re-run");
 }
 
 #[tokio::test]

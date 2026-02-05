@@ -276,6 +276,23 @@
         }
       }
     },
+    "RALPH": {
+      "DEFAULT": {
+        "RALPH": {
+          "plan_mode": false
+        }
+      },
+      "PLAN": {
+        "RALPH": {
+          "plan_mode": true
+        }
+      },
+      "BUILD": {
+        "RALPH": {
+          "plan_mode": false
+        }
+      }
+    },
     "DROID": {
       "DEFAULT": {
         "DROID": {

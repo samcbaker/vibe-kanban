@@ -3,6 +3,7 @@ import {
   GearIcon,
   CodeIcon,
   GlobeIcon,
+  RobotIcon,
 } from '@phosphor-icons/react';
 import { cn } from '@/lib/utils';
 import { formatRelativeTime } from '@/utils/date';
@@ -26,6 +27,8 @@ const RUN_REASON_LABELS: Record<ExecutionProcessRunReason, string> = {
   setupscript: 'Setup Script',
   cleanupscript: 'Cleanup Script',
   devserver: 'Dev Server',
+  ralphplan: 'Ralph (Planning)',
+  ralphbuild: 'Ralph (Building)',
 };
 
 const RUN_REASON_ICONS: Record<ExecutionProcessRunReason, typeof TerminalIcon> =
@@ -34,6 +37,8 @@ const RUN_REASON_ICONS: Record<ExecutionProcessRunReason, typeof TerminalIcon> =
     setupscript: GearIcon,
     cleanupscript: GearIcon,
     devserver: GlobeIcon,
+    ralphplan: RobotIcon,
+    ralphbuild: RobotIcon,
   };
 
 const STATUS_COLORS: Record<ExecutionProcessStatus, string> = {
