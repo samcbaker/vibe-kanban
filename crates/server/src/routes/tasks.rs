@@ -15,6 +15,7 @@ use axum::{
 use db::models::{
     image::TaskImage,
     repo::{Repo, RepoError},
+    session::{CreateSession, Session},
     task::{CreateTask, Task, TaskStatus, TaskWithAttemptStatus, UpdateTask},
     workspace::{CreateWorkspace, Workspace},
     workspace_repo::{CreateWorkspaceRepo, WorkspaceRepo},
@@ -340,6 +341,20 @@ pub async fn create_task_and_start_ralph(
         })
         .collect();
     WorkspaceRepo::create_many(&deployment.db().pool, workspace.id, &workspace_repos).await?;
+
+    // Create session FIRST so the Claude console is available in the frontend even if workspace setup fails
+    // executor is None so it accepts whatever executor the user sends on first follow-up
+    Session::create(
+        pool,
+        &CreateSession {
+            executor: None,
+        },
+        Uuid::new_v4(),
+        workspace.id,
+    )
+    .await
+    .inspect_err(|err| tracing::error!("Failed to create session for Ralph: {}", err))
+    .ok();
 
     // Initialize workspace (clone repos, set up worktree) but DON'T start the coding agent
     // We use container().create() which just prepares the workspace without running the agent

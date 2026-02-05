@@ -28,7 +28,7 @@ export const useConversationHistoryOld = ({
   attempt,
   onEntriesUpdated,
 }: UseConversationHistoryParams): UseConversationHistoryResult => {
-  const { executionProcessesVisible: executionProcessesRaw } =
+  const { executionProcessesVisible: executionProcessesRaw, isLoading: isProcessesLoading } =
     useExecutionProcessesContext();
   const executionProcesses = useRef<ExecutionProcess[]>(executionProcessesRaw);
   const displayedExecutionProcesses = useRef<ExecutionProcessStateStore>({});
@@ -535,12 +535,16 @@ export const useConversationHistoryOld = ({
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      // Waiting for execution processes to load
-      if (
-        executionProcesses?.current.length === 0 ||
-        loadedInitialEntries.current
-      )
+      if (loadedInitialEntries.current) return;
+
+      // No execution processes after loading is done — emit empty state
+      if (executionProcesses?.current.length === 0) {
+        if (!isProcessesLoading) {
+          emitEntries(displayedExecutionProcesses.current, 'initial', false);
+          loadedInitialEntries.current = true;
+        }
         return;
+      }
 
       // Initial entries
       const allInitialEntries = await loadInitialEntries();
@@ -567,10 +571,11 @@ export const useConversationHistoryOld = ({
   }, [
     attempt.id,
     idListKey,
+    isProcessesLoading,
     loadInitialEntries,
     loadRemainingEntriesInBatches,
     emitEntries,
-  ]); // include idListKey so new processes trigger reload
+  ]); // include idListKey so new processes trigger reload, isProcessesLoading to handle empty state
 
   useEffect(() => {
     const activeProcesses = getActiveAgentProcesses();

@@ -101,7 +101,7 @@ export function TaskFollowUpSection({
   );
   const { branch: attemptBranch, refetch: refetchAttemptBranch } =
     useAttemptBranch(workspaceId);
-  const { profiles } = useUserSystem();
+  const { system, profiles } = useUserSystem();
   const { comments, generateReviewMarkdown, clearComments } = useReview();
   const {
     generateMarkdown: generateClickedMarkdown,
@@ -150,10 +150,10 @@ export function TaskFollowUpSection({
   // Local message state for immediate UI feedback (before debounced save)
   const [localMessage, setLocalMessage] = useState('');
 
-  // Variant selection - derive default from latest process
+  // Variant selection - derive default from latest process, fall back to user's default profile
   const latestProfileId = useMemo(
-    () => getLatestProfileFromProcesses(processes),
-    [processes]
+    () => getLatestProfileFromProcesses(processes) ?? system.config?.executor_profile ?? null,
+    [processes, system.config?.executor_profile]
   );
 
   const currentProfile = useMemo(() => {
@@ -365,7 +365,11 @@ export function TaskFollowUpSection({
 
   // Separate logic for when textarea should be disabled vs when send button should be disabled
   const canTypeFollowUp = useMemo(() => {
-    if (!workspaceId || processes.length === 0 || isSendingFollowUp) {
+    if (!workspaceId || isSendingFollowUp) {
+      return false;
+    }
+    // Allow typing when there's a session (e.g. Ralph mode with no processes yet)
+    if (processes.length === 0 && !sessionId) {
       return false;
     }
 
@@ -375,6 +379,7 @@ export function TaskFollowUpSection({
     return true;
   }, [
     workspaceId,
+    sessionId,
     processes.length,
     isSendingFollowUp,
     isRetryActive,
