@@ -70,6 +70,40 @@ pub async fn stop(
     })))
 }
 
+/// POST /api/tasks/:task_id/ralph/open-plan
+pub async fn open_plan(
+    State(deployment): State<DeploymentImpl>,
+    Path(task_id): Path<Uuid>,
+) -> Result<ResponseJson<ApiResponse<RalphResponse>>, ApiError> {
+    info!("[Ralph] Opening IMPLEMENTATION_PLAN.md for task {}", task_id);
+
+    let pool = &deployment.db().pool;
+    let (worktree_path, _) = get_paths(pool, task_id).await?;
+
+    let plan_path = worktree_path.join(".ralph/IMPLEMENTATION_PLAN.md");
+    if !plan_path.exists() {
+        return Err(ApiError::BadRequest(format!(
+            "IMPLEMENTATION_PLAN.md not found at {}",
+            plan_path.display()
+        )));
+    }
+
+    let editor_config = {
+        let config = deployment.config().read().await;
+        config.editor.clone()
+    };
+
+    editor_config
+        .open_file(&plan_path)
+        .await
+        .map_err(|e| ApiError::BadRequest(format!("Failed to open editor: {}", e)))?;
+
+    Ok(ResponseJson(ApiResponse::success(RalphResponse {
+        success: true,
+        message: "Opened IMPLEMENTATION_PLAN.md in editor".into(),
+    })))
+}
+
 /// POST /api/tasks/:task_id/ralph/open-terminal
 pub async fn open_terminal(
     State(_deployment): State<DeploymentImpl>,
@@ -447,5 +481,6 @@ pub fn router(_deployment: &DeploymentImpl) -> Router<DeploymentImpl> {
         .route("/start-plan", post(start_plan))
         .route("/start-build", post(start_build))
         .route("/stop", post(stop))
+        .route("/open-plan", post(open_plan))
         .route("/open-terminal", post(open_terminal))
 }

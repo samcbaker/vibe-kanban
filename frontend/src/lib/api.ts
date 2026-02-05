@@ -1407,6 +1407,17 @@ export const ralphApi = {
   },
 
   /**
+   * Open IMPLEMENTATION_PLAN.md in the user's configured editor
+   */
+  openPlan: async (taskId: string): Promise<RalphResponse> => {
+    const response = await makeRequest(
+      `/api/tasks/${taskId}/ralph/open-plan`,
+      { method: 'POST' }
+    );
+    return handleApiResponse<RalphResponse>(response);
+  },
+
+  /**
    * Focus/open Terminal.app
    */
   openTerminal: async (taskId: string): Promise<RalphResponse> => {

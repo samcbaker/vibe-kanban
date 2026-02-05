@@ -77,6 +77,21 @@ const RalphControlDialogImpl = NiceModal.create<RalphControlDialogProps>(
       [handleAction, task.id]
     );
 
+    const openPlan = useCallback(async () => {
+      try {
+        console.log('[Ralph] Opening IMPLEMENTATION_PLAN.md');
+        const response = await ralphApi.openPlan(task.id);
+        if (!response.success) {
+          setError(response.message);
+        }
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : 'Failed to open plan';
+        console.error('[Ralph] Failed to open plan:', err);
+        setError(message);
+      }
+    }, [task.id]);
+
     const openTerminal = useCallback(async () => {
       try {
         console.log('[Ralph] Opening Terminal');
@@ -123,6 +138,14 @@ const RalphControlDialogImpl = NiceModal.create<RalphControlDialogProps>(
                 className="w-full justify-start"
               >
                 Start Build (max 20 iterations)
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={openPlan}
+                disabled={loading}
+                className="w-full justify-start"
+              >
+                Open Plan
               </Button>
               <Button
                 variant="secondary"
