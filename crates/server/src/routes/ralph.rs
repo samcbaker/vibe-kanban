@@ -228,7 +228,8 @@ async fn get_paths(
     Ok((worktree, repo.path.clone()))
 }
 
-/// Write the task spec (title + description) to .ralph/specs/task-spec.md in the worktree
+/// Write the task description to .ralph/specs/task-spec.md in the worktree.
+/// Strips any leading code fence markers (e.g. ```javascript) and trailing ``` from the description.
 fn write_task_spec(worktree_path: &StdPath, task: &Task) -> Result<(), ApiError> {
     let specs_dir = worktree_path.join(".ralph/specs");
     std::fs::create_dir_all(&specs_dir).map_err(|e| {
@@ -238,10 +239,10 @@ fn write_task_spec(worktree_path: &StdPath, task: &Task) -> Result<(), ApiError>
 
     let spec_path = specs_dir.join("task-spec.md");
 
-    let mut content = format!("# {}\n", task.title);
-    if let Some(ref desc) = task.description {
-        content.push_str(&format!("\n{}\n", desc));
-    }
+    let content = match task.description.as_deref() {
+        Some(desc) if !desc.trim().is_empty() => strip_code_fences(desc),
+        _ => String::new(),
+    };
 
     std::fs::write(&spec_path, &content).map_err(|e| {
         error!("[Ralph] Failed to write task-spec.md at {:?}: {}", spec_path, e);
@@ -250,6 +251,32 @@ fn write_task_spec(worktree_path: &StdPath, task: &Task) -> Result<(), ApiError>
 
     info!("[Ralph] Wrote task spec to {:?}", spec_path);
     Ok(())
+}
+
+/// Strip leading code fence (```lang) and trailing (```) if the entire content is wrapped in one.
+fn strip_code_fences(content: &str) -> String {
+    let trimmed = content.trim();
+
+    // Check if content starts with ``` (optionally followed by a language tag)
+    if let Some(rest) = trimmed.strip_prefix("```") {
+        // Find end of first line (the ```language line)
+        let after_opening = if let Some(newline_pos) = rest.find('\n') {
+            &rest[newline_pos + 1..]
+        } else {
+            return String::new();
+        };
+
+        // Strip trailing ```
+        let stripped = if let Some(body) = after_opening.trim_end().strip_suffix("```") {
+            body.trim()
+        } else {
+            after_opening.trim()
+        };
+
+        stripped.to_string()
+    } else {
+        trimmed.to_string()
+    }
 }
 
 // Helper: Ensure .ralph folder exists in worktree, copy from main repo if missing
@@ -313,8 +340,9 @@ fn open_terminal_with_command(
     iterations: u32,
 ) -> Result<(), ApiError> {
     let script_path = worktree_path.join(".ralph/loop.sh");
+    // Wait 5 seconds for the worktree and spec file to be fully ready before starting
     let cmd = format!(
-        "cd {} && bash {} {} {}",
+        "cd {} && echo 'Waiting for worktree to be ready...' && sleep 5 && bash {} {} {}",
         worktree_path.display(),
         script_path.display(),
         mode,

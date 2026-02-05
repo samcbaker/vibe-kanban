@@ -82,7 +82,8 @@ export function useTaskMutations(projectId?: string) {
         });
       }
       if (projectId) {
-        navigate(`${paths.task(projectId, createdTask.id)}/attempts/latest`);
+        // Navigate to task page only (no /attempts/latest) — Ralph runs in Terminal, not the console
+        navigate(paths.task(projectId, createdTask.id));
       }
     },
     onError: (err) => {
