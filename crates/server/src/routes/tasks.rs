@@ -15,7 +15,8 @@ use axum::{
 use db::models::{
     image::TaskImage,
     repo::{Repo, RepoError},
-    task::{CreateTask, Task, TaskWithAttemptStatus, UpdateTask},
+    session::{CreateSession, Session},
+    task::{CreateTask, Task, TaskStatus, TaskWithAttemptStatus, UpdateTask},
     workspace::{CreateWorkspace, Workspace},
     workspace_repo::{CreateWorkspaceRepo, WorkspaceRepo},
 };
@@ -31,6 +32,7 @@ use uuid::Uuid;
 
 use crate::{
     DeploymentImpl, error::ApiError, middleware::load_task_middleware,
+    routes::ralph,
     routes::task_attempts::WorkspaceRepoInput,
 };
 
@@ -144,6 +146,13 @@ pub struct CreateAndStartTaskRequest {
     pub repos: Vec<WorkspaceRepoInput>,
 }
 
+/// Request for creating a task and starting Ralph mode (without running the coding agent)
+#[derive(Debug, Deserialize, TS)]
+pub struct CreateAndStartRalphRequest {
+    pub task: CreateTask,
+    pub repos: Vec<WorkspaceRepoInput>,
+}
+
 pub async fn create_task_and_start(
     State(deployment): State<DeploymentImpl>,
     Json(payload): Json<CreateAndStartTaskRequest>,
@@ -248,6 +257,141 @@ pub async fn create_task_and_start(
         has_in_progress_attempt: is_attempt_running,
         last_attempt_failed: false,
         executor: payload.executor_profile_id.executor.to_string(),
+    })))
+}
+
+/// Create a task, workspace, and start Ralph mode (without running the coding agent).
+/// This is used when Ralph toggle is enabled on task creation.
+pub async fn create_task_and_start_ralph(
+    State(deployment): State<DeploymentImpl>,
+    Json(payload): Json<CreateAndStartRalphRequest>,
+) -> Result<ResponseJson<ApiResponse<TaskWithAttemptStatus>>, ApiError> {
+    if payload.repos.is_empty() {
+        return Err(ApiError::BadRequest(
+            "At least one repository is required".to_string(),
+        ));
+    }
+
+    let pool = &deployment.db().pool;
+
+    // Create task with ralph_enabled=true and status=inprogress
+    let mut task_data = payload.task.clone();
+    task_data.ralph_enabled = Some(true);
+    task_data.status = Some(TaskStatus::InProgress); // Task should be in progress while Ralph runs
+
+    let task_id = Uuid::new_v4();
+    let task = Task::create(pool, &task_data, task_id).await?;
+
+    if let Some(image_ids) = &payload.task.image_ids {
+        TaskImage::associate_many_dedup(pool, task.id, image_ids).await?;
+    }
+
+    deployment
+        .track_if_analytics_allowed(
+            "task_created",
+            serde_json::json!({
+                "task_id": task.id.to_string(),
+                "project_id": task.project_id,
+                "has_description": task.description.is_some(),
+                "has_images": payload.task.image_ids.is_some(),
+                "ralph_enabled": true,
+            }),
+        )
+        .await;
+
+    let attempt_id = Uuid::new_v4();
+    let git_branch_name = deployment
+        .container()
+        .git_branch_from_workspace(&attempt_id, &task.title)
+        .await;
+
+    // Compute agent_working_dir based on repo count
+    let agent_working_dir = if payload.repos.len() == 1 {
+        let repo = Repo::find_by_id(pool, payload.repos[0].repo_id)
+            .await?
+            .ok_or(RepoError::NotFound)?;
+        match repo.default_working_dir {
+            Some(subdir) => {
+                let path = PathBuf::from(&repo.name).join(&subdir);
+                Some(path.to_string_lossy().to_string())
+            }
+            None => Some(repo.name),
+        }
+    } else {
+        None
+    };
+
+    let workspace = Workspace::create(
+        pool,
+        &CreateWorkspace {
+            branch: git_branch_name,
+            agent_working_dir,
+        },
+        attempt_id,
+        task.id,
+    )
+    .await?;
+
+    let workspace_repos: Vec<CreateWorkspaceRepo> = payload
+        .repos
+        .iter()
+        .map(|r| CreateWorkspaceRepo {
+            repo_id: r.repo_id,
+            target_branch: r.target_branch.clone(),
+        })
+        .collect();
+    WorkspaceRepo::create_many(&deployment.db().pool, workspace.id, &workspace_repos).await?;
+
+    // Create session FIRST so the Claude console is available in the frontend even if workspace setup fails
+    // executor is None so it accepts whatever executor the user sends on first follow-up
+    Session::create(
+        pool,
+        &CreateSession {
+            executor: None,
+        },
+        Uuid::new_v4(),
+        workspace.id,
+    )
+    .await
+    .inspect_err(|err| tracing::error!("Failed to create session for Ralph: {}", err))
+    .ok();
+
+    // Initialize workspace (clone repos, set up worktree) but DON'T start the coding agent
+    // We use container().create() which just prepares the workspace without running the agent
+    let workspace_ready = deployment
+        .container()
+        .create(&workspace)
+        .await
+        .inspect_err(|err| tracing::error!("Failed to setup workspace for Ralph: {}", err))
+        .is_ok();
+
+    // Start Ralph plan mode
+    if workspace_ready {
+        if let Err(e) = ralph::start_ralph_for_task(&deployment, task.id).await {
+            tracing::warn!("Failed to start Ralph plan mode: {}. User can start it manually.", e);
+        }
+    }
+
+    deployment
+        .track_if_analytics_allowed(
+            "ralph_task_started",
+            serde_json::json!({
+                "task_id": task.id.to_string(),
+                "workspace_id": workspace.id.to_string(),
+            }),
+        )
+        .await;
+
+    let task = Task::find_by_id(pool, task.id)
+        .await?
+        .ok_or(ApiError::Database(SqlxError::RowNotFound))?;
+
+    tracing::info!("Created Ralph task {} with workspace {}", task.id, workspace.id);
+    Ok(ResponseJson(ApiResponse::success(TaskWithAttemptStatus {
+        task,
+        has_in_progress_attempt: false, // No coding agent running, just Ralph
+        last_attempt_failed: false,
+        executor: "ralph".to_string(),
     })))
 }
 
@@ -403,12 +547,14 @@ pub fn router(deployment: &DeploymentImpl) -> Router<DeploymentImpl> {
     let task_id_router = Router::new()
         .route("/", get(get_task))
         .merge(task_actions_router)
+        .nest("/ralph", ralph::router(deployment)) // Ralph Mode control routes
         .layer(from_fn_with_state(deployment.clone(), load_task_middleware));
 
     let inner = Router::new()
         .route("/", get(get_tasks).post(create_task))
         .route("/stream/ws", get(stream_tasks_ws))
         .route("/create-and-start", post(create_task_and_start))
+        .route("/create-and-start-ralph", post(create_task_and_start_ralph))
         .nest("/{task_id}", task_id_router);
 
     // mount under /projects/:project_id/tasks

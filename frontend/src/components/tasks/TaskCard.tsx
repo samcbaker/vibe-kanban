@@ -9,8 +9,35 @@ import { paths } from '@/lib/paths';
 import { attemptsApi } from '@/lib/api';
 import { TaskCardHeader } from './TaskCardHeader';
 import { useTranslation } from 'react-i18next';
+import { RalphControlDialog } from '@/components/dialogs/tasks/RalphControlDialog';
 
 type Task = TaskWithAttemptStatus;
+
+// Ralph Mode badge - shows when ralph_enabled is true
+function RalphBadge({
+  task,
+  onClick,
+}: {
+  task: Task;
+  onClick: () => void;
+}) {
+  if (!task.ralph_enabled) return null;
+
+  return (
+    <button
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
+      onPointerDown={(e) => e.stopPropagation()}
+      onMouseDown={(e) => e.stopPropagation()}
+      className="flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-purple-100 text-purple-700 hover:bg-purple-200 dark:bg-purple-900/30 dark:text-purple-300 dark:hover:bg-purple-900/50"
+      title="Ralph Mode enabled - click to control"
+    >
+      <span className="text-xs">R</span>
+    </button>
+  );
+}
 
 interface TaskCardProps {
   task: Task;
@@ -60,6 +87,11 @@ export function TaskCard({
     [task.parent_workspace_id, projectId, navigate, isNavigatingToParent]
   );
 
+  const handleRalphClick = useCallback(() => {
+    console.log('[Ralph] Opening control dialog for task', task.id);
+    RalphControlDialog.show({ task });
+  }, [task]);
+
   const localRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -90,6 +122,7 @@ export function TaskCard({
           title={task.title}
           right={
             <>
+              <RalphBadge task={task} onClick={handleRalphClick} />
               {task.has_in_progress_attempt && (
                 <Loader2 className="h-4 w-4 animate-spin text-blue-500" />
               )}

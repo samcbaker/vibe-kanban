@@ -650,6 +650,7 @@ pub async fn create_workspace_from_pr(
         status: Some(TaskStatus::InProgress),
         parent_workspace_id: None,
         image_ids: None,
+        ralph_enabled: None, // PR-created tasks don't use Ralph Mode
     };
     let task = Task::create(pool, &create_task, task_id).await?;
 

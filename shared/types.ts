@@ -40,13 +40,13 @@ export type UpdateTag = { tag_name: string | null, content: string | null, };
 
 export type TaskStatus = "todo" | "inprogress" | "inreview" | "done" | "cancelled";
 
-export type Task = { id: string, project_id: string, title: string, description: string | null, status: TaskStatus, parent_workspace_id: string | null, created_at: string, updated_at: string, };
+export type Task = { id: string, project_id: string, title: string, description: string | null, status: TaskStatus, parent_workspace_id: string | null, ralph_enabled: boolean, created_at: string, updated_at: string, };
 
-export type TaskWithAttemptStatus = { has_in_progress_attempt: boolean, last_attempt_failed: boolean, executor: string, id: string, project_id: string, title: string, description: string | null, status: TaskStatus, parent_workspace_id: string | null, created_at: string, updated_at: string, };
+export type TaskWithAttemptStatus = { has_in_progress_attempt: boolean, last_attempt_failed: boolean, executor: string, id: string, project_id: string, title: string, description: string | null, status: TaskStatus, parent_workspace_id: string | null, ralph_enabled: boolean, created_at: string, updated_at: string, };
 
 export type TaskRelationships = { parent_task: Task | null, current_workspace: Workspace, children: Array<Task>, };
 
-export type CreateTask = { project_id: string, title: string, description: string | null, status: TaskStatus | null, parent_workspace_id: string | null, image_ids: Array<string> | null, };
+export type CreateTask = { project_id: string, title: string, description: string | null, status: TaskStatus | null, parent_workspace_id: string | null, image_ids: Array<string> | null, ralph_enabled: boolean | null, };
 
 export type UpdateTask = { title: string | null, description: string | null, status: TaskStatus | null, parent_workspace_id: string | null, image_ids: Array<string> | null, };
 
@@ -233,6 +233,8 @@ export type OpenEditorRequest = { editor_type: string | null, file_path: string 
 export type OpenEditorResponse = { url: string | null, };
 
 export type CreateAndStartTaskRequest = { task: CreateTask, executor_profile_id: ExecutorProfileId, repos: Array<WorkspaceRepoInput>, };
+
+export type CreateAndStartRalphRequest = { task: CreateTask, repos: Array<WorkspaceRepoInput>, };
 
 export type CreatePrApiRequest = { title: string, body: string | null, target_branch: string | null, draft: boolean | null, repo_id: string, auto_generate_description: boolean, };
 
@@ -574,6 +576,8 @@ export type ToolStatus = { "status": "created" } | { "status": "success" } | { "
 export type PatchType = { "type": "NORMALIZED_ENTRY", "content": NormalizedEntry } | { "type": "STDOUT", "content": string } | { "type": "STDERR", "content": string } | { "type": "DIFF", "content": Diff };
 
 export type JsonValue = number | string | boolean | Array<JsonValue> | { [key in string]?: JsonValue } | null;
+
+export type RalphResponse = { success: boolean, message: string, };
 
 export const DEFAULT_PR_DESCRIPTION_PROMPT = `Update the PR that was just created with a better title and description.
 The PR number is #{pr_number} and the URL is {pr_url}.

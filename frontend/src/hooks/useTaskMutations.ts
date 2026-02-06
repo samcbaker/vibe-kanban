@@ -7,6 +7,7 @@ import { workspaceSummaryKeys } from '@/components/ui-new/hooks/useWorkspaces';
 import type {
   CreateTask,
   CreateAndStartTaskRequest,
+  CreateAndStartRalphRequest,
   Task,
   TaskWithAttemptStatus,
   UpdateTask,
@@ -67,6 +68,28 @@ export function useTaskMutations(projectId?: string) {
     },
   });
 
+  const createAndStartRalph = useMutation({
+    mutationFn: (data: CreateAndStartRalphRequest) =>
+      tasksApi.createAndStartRalph(data),
+    onSuccess: (createdTask: TaskWithAttemptStatus) => {
+      invalidateQueries();
+      // Invalidate parent's relationships cache if this is a subtask
+      if (createdTask.parent_workspace_id) {
+        queryClient.invalidateQueries({
+          queryKey: taskRelationshipsKeys.byAttempt(
+            createdTask.parent_workspace_id
+          ),
+        });
+      }
+      if (projectId) {
+        navigate(`${paths.task(projectId, createdTask.id)}/attempts/latest`);
+      }
+    },
+    onError: (err) => {
+      console.error('Failed to create and start Ralph task:', err);
+    },
+  });
+
   const updateTask = useMutation({
     mutationFn: ({ taskId, data }: { taskId: string; data: UpdateTask }) =>
       tasksApi.update(taskId, data),
@@ -97,6 +120,7 @@ export function useTaskMutations(projectId?: string) {
   return {
     createTask,
     createAndStart,
+    createAndStartRalph,
     updateTask,
     deleteTask,
   };

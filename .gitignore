@@ -85,3 +85,8 @@ dev_assets
 vibe-kanban-cloud/
 
 .jj
+
+#Ralph
+.ralph/IMPLEMENTATION_PLAN.md
+.ralph/specs/*.md
+cwralph/
