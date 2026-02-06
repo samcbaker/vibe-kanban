@@ -401,8 +401,9 @@ fn open_terminal_with_command(
 ) -> Result<(), ApiError> {
     let script_path = worktree_path.join(".ralph/loop.sh");
     // Wait 5 seconds for the worktree and spec file to be fully ready before starting
+    // Activate a Python venv before running the loop script
     let cmd = format!(
-        "cd {} && echo 'Waiting for worktree to be ready...' && sleep 5 && bash {} {} {}",
+        "cd {} && echo 'Waiting for worktree to be ready...' && sleep 5 && python3 -m venv .venv && . .venv/bin/activate && bash {} {} {}",
         worktree_path.display(),
         script_path.display(),
         mode,
