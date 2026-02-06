@@ -1418,6 +1418,17 @@ export const ralphApi = {
   },
 
   /**
+   * Open worktree directory in Cursor
+   */
+  openCursor: async (taskId: string): Promise<RalphResponse> => {
+    const response = await makeRequest(
+      `/api/tasks/${taskId}/ralph/open-cursor`,
+      { method: 'POST' }
+    );
+    return handleApiResponse<RalphResponse>(response);
+  },
+
+  /**
    * Focus/open Terminal.app
    */
   openTerminal: async (taskId: string): Promise<RalphResponse> => {

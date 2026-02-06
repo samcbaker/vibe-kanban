@@ -104,6 +104,32 @@ pub async fn open_plan(
     })))
 }
 
+/// POST /api/tasks/:task_id/ralph/open-cursor
+pub async fn open_cursor(
+    State(deployment): State<DeploymentImpl>,
+    Path(task_id): Path<Uuid>,
+) -> Result<ResponseJson<ApiResponse<RalphResponse>>, ApiError> {
+    info!("[Ralph] Opening worktree in Cursor for task {}", task_id);
+
+    let pool = &deployment.db().pool;
+    let (worktree_path, _) = get_paths(pool, task_id).await?;
+
+    let editor_config = {
+        let config = deployment.config().read().await;
+        config.editor.with_override(Some("CURSOR"))
+    };
+
+    editor_config
+        .open_file(&worktree_path)
+        .await
+        .map_err(|e| ApiError::BadRequest(format!("Failed to open Cursor: {}", e)))?;
+
+    Ok(ResponseJson(ApiResponse::success(RalphResponse {
+        success: true,
+        message: "Opened worktree in Cursor".into(),
+    })))
+}
+
 /// POST /api/tasks/:task_id/ralph/open-terminal
 pub async fn open_terminal(
     State(_deployment): State<DeploymentImpl>,
@@ -482,5 +508,6 @@ pub fn router(_deployment: &DeploymentImpl) -> Router<DeploymentImpl> {
         .route("/start-build", post(start_build))
         .route("/stop", post(stop))
         .route("/open-plan", post(open_plan))
+        .route("/open-cursor", post(open_cursor))
         .route("/open-terminal", post(open_terminal))
 }

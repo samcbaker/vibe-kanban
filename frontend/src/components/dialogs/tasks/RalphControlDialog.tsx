@@ -92,6 +92,21 @@ const RalphControlDialogImpl = NiceModal.create<RalphControlDialogProps>(
       }
     }, [task.id]);
 
+    const openCursor = useCallback(async () => {
+      try {
+        console.log('[Ralph] Opening worktree in Cursor');
+        const response = await ralphApi.openCursor(task.id);
+        if (!response.success) {
+          setError(response.message);
+        }
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : 'Failed to open Cursor';
+        console.error('[Ralph] Failed to open Cursor:', err);
+        setError(message);
+      }
+    }, [task.id]);
+
     const openTerminal = useCallback(async () => {
       try {
         console.log('[Ralph] Opening Terminal');
@@ -146,6 +161,14 @@ const RalphControlDialogImpl = NiceModal.create<RalphControlDialogProps>(
                 className="w-full justify-start"
               >
                 Open Plan
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={openCursor}
+                disabled={loading}
+                className="w-full justify-start"
+              >
+                Open in Cursor
               </Button>
               <Button
                 variant="secondary"
